@@ -68,15 +68,17 @@ try:
     import kubernetes  # pylint: disable=import-self
     import kubernetes.client
     from kubernetes.client.rest import ApiException
+    from kubernetes.client import api_client
+    from kubernetes.dynamic.exceptions import ResourceNotFoundError
     from urllib3.exceptions import HTTPError
 
     # pylint: disable=no-name-in-module
     try:
         # There is an API change in Kubernetes >= 2.0.0.
-        from kubernetes.client import V1beta1Deployment as AppsV1beta1Deployment
-        from kubernetes.client import V1beta1DeploymentSpec as AppsV1beta1DeploymentSpec
+        from kubernetes.client import V1Deployment as AppsV1Deployment
+        from kubernetes.client import V1DeploymentSpec as AppsV1DeploymentSpec
     except ImportError:
-        from kubernetes.client import AppsV1beta1Deployment, AppsV1beta1DeploymentSpec
+        from kubernetes.client import AppsV1Deployment, AppsV1DeploymentSpec
     # pylint: enable=no-name-in-module
 
     HAS_LIBS = True
@@ -253,6 +255,29 @@ def _cleanup(**kwargs):
             except OSError as err:
                 if err.errno != errno.ENOENT:
                     log.exception(err)
+
+def get_resource_def(apiVersion="v1", kind=None, **kwargs):
+    """
+    Get a resource definition using the dynamic client discoverer
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.dynamic.DynamicClient(
+            api_client.ApiClient()
+        )
+        res = api_instance.resources.get(api_version=apiVersion, kind=kind)
+        return res
+
+    except (ApiException, HTTPError, ResourceNotFoundError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling DynamicClient->resources.get")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+    return None
 
 
 def ping(**kwargs):
@@ -492,6 +517,33 @@ def services(namespace="default", **kwargs):
         _cleanup(**cfg)
 
 
+def service_accounts(namespace="default", **kwargs):
+    """
+    Return a list of kubernetes serviceaccounts defined in the namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.service_accounts
+        salt '*' kubernetes.service_accounts namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.list_namespaced_service_account(namespace)
+
+        return [srv["metadata"]["name"] for srv in api_response.to_dict().get("items")]
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->list_namespaced_service_account")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
 def pods(namespace="default", **kwargs):
     """
     Return a list of kubernetes pods defined in the namespace
@@ -627,6 +679,141 @@ def show_service(name, namespace="default", **kwargs):
         _cleanup(**cfg)
 
 
+def show_service_account(name, namespace="default", **kwargs):
+    """
+    Return the kubernetes serviceaccount defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_service_account my-serviceacct default
+        salt '*' kubernetes.show_service_account name=my-serviceacct namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.read_namespaced_service_account(name, namespace)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_namespaced_service_account")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_role(name, namespace="default", **kwargs):
+    """
+    Return the kubernetes role defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_role my-role default
+        salt '*' kubernetes.show_role name=my-role namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.read_namespaced_role(name, namespace)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_namespaced_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_cluster_role(name, **kwargs):
+    """
+    Return the kubernetes cluster role defined by name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_cluster_role my-role
+        salt '*' kubernetes.show_cluster_role name=my-role
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.read_cluster_role(name)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_cluster_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_role_binding(name, namespace="default", **kwargs):
+    """
+    Return the kubernetes RoleBinding defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_role_binding my-rolebind default
+        salt '*' kubernetes.show_role_binding name=my-rolebind namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.read_namespaced_role_binding(name, namespace)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_namespaced_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_cluster_role_binding(name, **kwargs):
+    """
+    Return the kubernetes ClusterRoleBinding defined by name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_cluster_role_binding my-rolebind
+        salt '*' kubernetes.show_cluster_role_binding name=my-rolebind
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.read_cluster_role_binding(name)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_cluster_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
 def show_pod(name, namespace="default", **kwargs):
     """
     Return POD information for a given pod name defined in the namespace
@@ -675,6 +862,61 @@ def show_namespace(name, **kwargs):
             return None
         else:
             log.exception("Exception when calling CoreV1Api->read_namespace")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_persistentvolume(name, **kwargs):
+    """
+    Return information for a PersistentVolume with the specified name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_persistentvolume mypv
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.read_persistent_volume(name)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_persistent_volume")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_persistentvolumeclaim(name, namespace="default", **kwargs):
+    """
+    Return the kubernetes secret defined by name and namespace.
+    The secrets can be decoded if specified by the user. Warning: this has
+    security implications.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_persistentvolumeclaim mypvc mynamespace
+        salt '*' kubernetes.show_persistentvolumeclaim name=mypvc namespace=mynamespace
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.read_namespaced_persistent_volume_claim(name, namespace)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->read_namespaced_persistent_volume_claim")
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
@@ -736,7 +978,85 @@ def show_configmap(name, namespace="default", **kwargs):
         if isinstance(exc, ApiException) and exc.status == 404:
             return None
         else:
-            log.exception("Exception when calling CoreV1Api->read_namespaced_config_map")
+            log.exception(
+                "Exception when calling CoreV1Api->read_namespaced_config_map"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_namespaced_custom_obj(name, apiVersion, kind, namespace="default", **kwargs):
+    """
+    Return the kubernetes namespaced custom object defined by name and kind.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_namespaced_custom_obj myres v1 blah default
+        salt '*' kubernetes.show_namespaced_custom_obj name=myres apiVersion=x kind=blah namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.dynamic.DynamicClient(
+            api_client.ApiClient()
+        )
+
+        res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+
+        if res_def is None:
+            return None
+
+        api_response = api_instance.get(resource=res_def,
+                         name=name, namespace=namespace )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling DynamicClient->get"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def show_custom_obj(name, apiVersion, kind, **kwargs):
+    """
+    Return the kubernetes custom object defined by name and kind.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_custom_obj v1 blah default
+        salt '*' kubernetes.show_namespaced_custom_obj apiVersion=x kind=blah namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.dynamic.DynamicClient(
+            api_client.ApiClient()
+        )
+
+        res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+
+        if res_def is None:
+            return None
+
+        api_response = api_instance.get(resource=res_def,
+                         name=name)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling DynamicClient->get"
+            )
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
@@ -827,6 +1147,156 @@ def delete_service(name, namespace="default", **kwargs):
         _cleanup(**cfg)
 
 
+def delete_service_account(name, namespace="default", **kwargs):
+    """
+    Deletes the kubernetes serviceaccount defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_service_account my-serviceaccount default
+        salt '*' kubernetes.delete_service name=my-serviceaccount namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_namespaced_service_account(
+            name=name, namespace=namespace
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_namespaced_service_account")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_role(name, namespace="default", **kwargs):
+    """
+    Deletes the kubernetes role defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_role my-role default
+        salt '*' kubernetes.delete_role name=my-role namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_namespaced_role(
+            name=name, namespace=namespace
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_namespaced_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_cluster_role(name, **kwargs):
+    """
+    Deletes the kubernetes cluster role defined by name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_cluster_role my-role
+        salt '*' kubernetes.delete_cluster_role name=my-role
+    """
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_cluster_role(
+            name=name
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_cluster_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_role_binding(name, namespace="default", **kwargs):
+    """
+    Deletes the kubernetes RoleBinding defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_role_binding my-rolebind default
+        salt '*' kubernetes.delete_role_binding name=my-rolebind namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_namespaced_role_binding(
+            name=name, namespace=namespace
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_namespaced_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_cluster_role_binding(name, **kwargs):
+    """
+    Deletes the kubernetes ClusterRoleBinding defined by name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_cluster_role_binding my-rolebind
+        salt '*' kubernetes.delete_cluster_role_binding name=my-rolebind
+    """
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_cluster_role_binding(
+            name=name
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_cluster_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
 def delete_pod(name, namespace="default", **kwargs):
     """
     Deletes the kubernetes pod defined by name and namespace
@@ -879,6 +1349,65 @@ def delete_namespace(name, **kwargs):
             return None
         else:
             log.exception("Exception when calling CoreV1Api->delete_namespace")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_persistentvolume(name, **kwargs):
+    """
+    Deletes the kubernetes PersistentVolume defined by name
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_persistentvolume mypv
+        salt '*' kubernetes.delete_persistentvolume name=mypv
+    """
+    cfg = _setup_conn(**kwargs)
+    body = kubernetes.client.V1DeleteOptions(orphan_dependents=True)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_persistent_volume(name=name, body=body)
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_persistent_volume")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_persistentvolumeclaim(name, namespace="default", **kwargs):
+    """
+    Deletes the kubernetes PersistentVolumeClaim defined by name and namespace
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.delete_persistentvolumeclaim mypvc default
+        salt '*' kubernetes.delete_persistentvolumeclaim name=mypvc namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    body = kubernetes.client.V1DeleteOptions(orphan_dependents=True)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.delete_namespaced_persistent_volume_claim(
+            name=name, namespace=namespace, body=body
+        )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->delete_namespaced_persistent_volume_claim")
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
@@ -940,25 +1469,97 @@ def delete_configmap(name, namespace="default", **kwargs):
         if isinstance(exc, ApiException) and exc.status == 404:
             return None
         else:
-            log.exception("Exception when calling CoreV1Api->delete_namespaced_config_map")
+            log.exception(
+                "Exception when calling CoreV1Api->delete_namespaced_config_map"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+def delete_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Delete the kubernetes namespaced custom object specified by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+    if res_def is None:
+        return None
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.delete(name=name, namespace=namespace)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->delete")
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
 
 
-def create_deployment(name, namespace, metadata, spec, source, template, saltenv, **kwargs):
+def delete_custom_obj(
+    name,
+    apiVersion="v1",
+    kind=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Delete the kubernetes custom object specified by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+    if res_def is None:
+        return None
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.delete(name=name)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->delete")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_deployment(
+    name, namespace, metadata, spec, source, template, saltenv, **kwargs
+):
     """
     Creates the kubernetes deployment as defined by the user.
-
-    CLI Example:
-
-    .. code-block:: bash
-
-        salt '*' kubernetes.create_deployment *args
     """
     body = __create_object_body(
         kind="Deployment",
-        obj_class=AppsV1beta1Deployment,
+        obj_class=AppsV1Deployment,
         spec_creator=__dict_to_deployment_spec,
         name=name,
         namespace=namespace,
@@ -981,7 +1582,8 @@ def create_deployment(name, namespace, metadata, spec, source, template, saltenv
             return None
         else:
             log.exception(
-                "Exception when calling ExtensionsV1beta1Api->create_namespaced_deployment"
+                "Exception when calling "
+                "ExtensionsV1beta1Api->create_namespaced_deployment"
             )
             raise CommandExecutionError(exc)
     finally:
@@ -1068,8 +1670,189 @@ def create_service(name, namespace, metadata, spec, source, template, saltenv, *
         _cleanup(**cfg)
 
 
+def create_service_account(
+    name,
+    metadata,
+    saltenv,
+    namespace="default",
+    automount_service_account_token=None,
+    image_pull_secrets=None,
+    secrets=None,
+    **kwargs
+):
+    """
+    Creates the kubernetes serviceaccount as defined by the user.
+    """
+    body = kubernetes.client.V1ServiceAccount(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        automount_service_account_token=automount_service_account_token,
+        image_pull_secrets=image_pull_secrets,
+        secrets=secrets,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.create_namespaced_service_account(namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->create_namespaced_service_account")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_role(
+    name,
+    namespace,
+    metadata,
+    rules,
+    saltenv,
+    **kwargs
+):
+    """
+    Creates the kubernetes role as defined by the user.
+    """
+    body = kubernetes.client.V1Role(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        rules=rules,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.create_namespaced_role(namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_cluster_role(
+    name,
+    metadata,
+    rules,
+    saltenv,
+    **kwargs
+):
+    """
+    Creates the kubernetes cluster role as defined by the user.
+    """
+    body = kubernetes.client.V1ClusterRole(
+        metadata=__dict_to_object_meta(name, None, metadata),
+        rules=rules,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.create_cluster_role(body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling RbacAuthorizationV1Api->create_cluster_role")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_role_binding(
+    name,
+    namespace,
+    metadata,
+    role_ref,
+    subjects,
+    saltenv,
+    **kwargs
+):
+    """
+    Creates the kubernetes RoleBinding as defined by the user.
+    """
+    body = kubernetes.client.V1RoleBinding(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        role_ref=role_ref,
+        subjects=subjects,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.create_namespaced_role_binding(namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_cluster_role_binding(
+    name,
+    metadata,
+    role_ref,
+    subjects,
+    saltenv,
+    **kwargs
+):
+    """
+    Creates the kubernetes ClusterRoleBinding as defined by the user.
+    """
+    body = kubernetes.client.V1ClusterRoleBinding(
+        metadata=__dict_to_object_meta(name, None, metadata),
+        role_ref=role_ref,
+        subjects=subjects,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.create_cluster_role_binding(body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling RbacAuthorizationV1Api->create_cluster_role_binding")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
 def create_secret(
-    name, namespace="default", data=None, source=None, template=None, saltenv="base", **kwargs
+    name,
+    namespace="default",
+    data=None,
+    metadata=None,
+    stringData=None,
+    source=None,
+    template=None,
+    context=None,
+    type="Opaque",
+    saltenv="base",
+    **kwargs
 ):
     """
     Creates the kubernetes secret as defined by the user.
@@ -1085,18 +1868,18 @@ def create_secret(
             name=passwords namespace=default data='{"db": "letmein"}'
     """
     if source:
-        data = __read_and_render_yaml_file(source, template, saltenv)
+        data = __read_and_render_yaml_file(source, template, saltenv, context)
     elif data is None:
         data = {}
 
     data = __enforce_only_strings_dict(data)
 
-    # encode the secrets using base64 as required by kubernetes
-    for key in data:
-        data[key] = base64.b64encode(data[key])
+    if stringData is not None:
+        stringData = __enforce_only_strings_dict(data)
 
     body = kubernetes.client.V1Secret(
-        metadata=__dict_to_object_meta(name, namespace, {}), data=data
+        metadata=__dict_to_object_meta(name, namespace, metadata), data=data,
+            string_data=stringData, type=type,
     )
 
     cfg = _setup_conn(**kwargs)
@@ -1138,7 +1921,7 @@ def create_configmap(name, namespace, data, source=None, template=None, saltenv=
     data = __enforce_only_strings_dict(data)
 
     body = kubernetes.client.V1ConfigMap(
-        metadata=__dict_to_object_meta(name, namespace, {}), data=data
+        metadata=__dict_to_object_meta(name, namespace, metadata), data=data
     )
 
     cfg = _setup_conn(**kwargs)
@@ -1191,22 +1974,203 @@ def create_namespace(name, **kwargs):
         _cleanup(**cfg)
 
 
-def replace_deployment(
-    name, metadata, spec, source, template, saltenv, namespace="default", **kwargs
+def create_persistentvolume(
+    name,
+    metadata=None,
+    spec=None,
+    status=None,
+    saltenv="base",
+    **kwargs
 ):
     """
-    Replaces an existing deployment with a new one defined by name and
-    namespace, having the specificed metadata and spec.
+    Creates a PersistentVolume with the specified name.
 
     CLI Example:
 
     .. code-block:: bash
 
-        salt '*' kubernetes.replace_deployment *args
+        salt '*' kubernetes.create_persistentvolume mypv
+        salt '*' kubernetes.create_persistentvolume name=mypv spec={'volumeMode': 'Filesystem'}
+    """
+
+    body = kubernetes.client.V1PersistentVolume(
+        metadata=__dict_to_object_meta(name, None, metadata),
+        spec=spec,
+        status=status,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.create_persistent_volume(body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->create_persistent_volume")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_persistentvolumeclaim(
+    name,
+    namespace="default",
+    metadata=None,
+    spec=None,
+    status=None,
+    saltenv="base",
+    **kwargs
+):
+
+    """
+    Creates the kubernetes PersistentVolumeClaim as defined by the user.
+    """
+    body = kubernetes.client.V1PersistentVolumeClaim(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        spec=spec,
+        status=status,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.create_namespaced_persistent_volume_claim(namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling CoreV1Api->create_namespaced_persistent_volume_claim")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Creates the kubernetes custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+    if res_def is None:
+        return None
+
+    res_manifest = {
+            "apiVersion": apiVersion,
+            "kind": kind,
+            "metadata": __dict_to_object_meta(name, namespace, metadata).to_dict(),
+            "spec": spec,
+    }
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.create(body=res_manifest, namespace=namespace)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->create")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def create_custom_obj(
+    name,
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Creates the cluster-wide kubernetes custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        return None
+
+    meta = __dict_to_object_meta(name, None, metadata).to_dict()
+
+    res_manifest = {
+            "apiVersion": apiVersion,
+            "kind": kind,
+            "metadata": meta,
+            "spec": spec,
+    }
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.create(body=res_manifest)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->create")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_deployment(
+    name,
+    metadata,
+    spec,
+    source,
+    template,
+    saltenv,
+    rebuild=False,
+    namespace="default",
+    **kwargs
+):
+    """
+    Replaces an existing deployment with a new one defined by name and
+    namespace, having the specified metadata and spec.
     """
     body = __create_object_body(
         kind="Deployment",
-        obj_class=AppsV1beta1Deployment,
+        obj_class=AppsV1Deployment,
         spec_creator=__dict_to_deployment_spec,
         name=name,
         namespace=namespace,
@@ -1237,7 +2201,16 @@ def replace_deployment(
 
 
 def replace_service(
-    name, metadata, spec, source, template, old_service, saltenv, namespace="default", **kwargs
+    name,
+    metadata,
+    spec,
+    source,
+    template,
+    old_service,
+    saltenv,
+    rebuild=False,
+    namespace="default",
+    **kwargs
 ):
     """
     Replaces an existing service with a new one defined by name and namespace,
@@ -1278,18 +2251,248 @@ def replace_service(
         if isinstance(exc, ApiException) and exc.status == 404:
             return None
         else:
-            log.exception("Exception when calling CoreV1Api->replace_namespaced_service")
+            log.exception(
+                "Exception when calling CoreV1Api->replace_namespaced_service"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_service_account(
+    name,
+    metadata,
+    saltenv,
+    namespace,
+    automount_service_account_token,
+    image_pull_secrets,
+    secrets,
+    old_service_account,
+    rebuild=False,
+    **kwargs
+):
+    """
+    Replaces an existing service account with a new one defined by name and
+    namespace, having the specified metadata and options.
+    """
+
+    body = kubernetes.client.V1ServiceAccount(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        automount_service_account_token=automount_service_account_token,
+        image_pull_secrets=image_pull_secrets,
+        secrets=secrets,
+    )
+
+    # Some attributes have to be preserved
+    # otherwise exceptions will be thrown
+    body.metadata.resource_version = old_service_account["metadata"]["resource_version"]
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.CoreV1Api()
+        api_response = api_instance.replace_namespaced_service_account(name, namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling CoreV1Api->replace_namespaced_service_account"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_role(
+    name,
+    namespace,
+    metadata,
+    rules,
+    old_role,
+    saltenv,
+    **kwargs
+):
+    """
+    Replaces an existing role with a new one defined by name and
+    namespace, having the specified metadata and rules.
+    """
+
+    body = kubernetes.client.V1Role(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        rules=rules,
+    )
+
+    # Some attributes have to be preserved
+    # otherwise exceptions will be thrown
+    body.metadata.resource_version = old_role["metadata"]["resource_version"]
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.replace_namespaced_role(name, namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling RbacAuthorizationV1Api->replace_namespaced_role"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_cluster_role(
+    name,
+    metadata,
+    rules,
+    old_role,
+    saltenv,
+    **kwargs
+):
+    """
+    Replaces an existing role with a new one defined by name and
+    namespace, having the specified metadata and rules.
+    """
+
+    body = kubernetes.client.V1ClusterRole(
+        metadata=__dict_to_object_meta(name, None, metadata),
+        rules=rules,
+    )
+
+    # Some attributes have to be preserved
+    # otherwise exceptions will be thrown
+    body.metadata.resource_version = old_role["metadata"]["resource_version"]
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.replace_cluster_role(name, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling RbacAuthorizationV1Api->replace_cluster_role"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_role_binding(
+    name,
+    namespace,
+    metadata,
+    role_ref,
+    subjects,
+    old_role_binding,
+    saltenv,
+    **kwargs
+):
+    """
+    Replaces an existing RoleBinding with a new one defined by name and
+    namespace, having the specified metadata and roleref and subjects.
+    """
+
+    body = kubernetes.client.V1RoleBinding(
+        metadata=__dict_to_object_meta(name, namespace, metadata),
+        role_ref=role_ref,
+        subjects=subjects,
+    )
+
+    # Some attributes have to be preserved
+    # otherwise exceptions will be thrown
+    body.metadata.resource_version = old_role_binding["metadata"]["resource_version"]
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.replace_namespaced_role_binding(name, namespace, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling RbacAuthorizationV1Api->replace_namespaced_role_binding"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_cluster_role_binding(
+    name,
+    metadata,
+    role_ref,
+    subjects,
+    old_role_binding,
+    saltenv,
+    **kwargs
+):
+    """
+    Replaces an existing ClusterRoleBinding with a new one defined by name and
+    namespace, having the specified metadata and roleref and subjects.
+    """
+
+    body = kubernetes.client.V1ClusterRoleBinding(
+        metadata=__dict_to_object_meta(name, None, metadata),
+        role_ref=role_ref,
+        subjects=subjects,
+    )
+
+    # Some attributes have to be preserved
+    # otherwise exceptions will be thrown
+    body.metadata.resource_version = old_role_binding["metadata"]["resource_version"]
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.RbacAuthorizationV1Api()
+        api_response = api_instance.replace_cluster_role_binding(name, body)
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling RbacAuthorizationV1Api->replace_cluster_role_binding"
+            )
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
 
 
 def replace_secret(
-    name, data, source=None, template=None, saltenv="base", namespace="default", **kwargs
+    name,
+    data,
+    stringData=None,
+    metadata=None,
+    source=None,
+    template=None,
+    context=None,
+    type="Opaque",
+    rebuild=False,
+    saltenv="base",
+    namespace="default",
+    **kwargs
 ):
     """
     Replaces an existing secret with a new one defined by name and namespace,
-    having the specificed data.
+    having the specified data.
 
     CLI Example:
 
@@ -1308,12 +2511,9 @@ def replace_secret(
 
     data = __enforce_only_strings_dict(data)
 
-    # encode the secrets using base64 as required by kubernetes
-    for key in data:
-        data[key] = base64.b64encode(data[key])
-
     body = kubernetes.client.V1Secret(
-        metadata=__dict_to_object_meta(name, namespace, {}), data=data
+        metadata=__dict_to_object_meta(name, namespace, metadata), data=data,
+        string_data=stringData, type=type,
     )
 
     cfg = _setup_conn(**kwargs)
@@ -1334,7 +2534,16 @@ def replace_secret(
 
 
 def replace_configmap(
-    name, data, source=None, template=None, saltenv="base", namespace="default", **kwargs
+    name,
+    data,
+    metadata=None,
+    source=None,
+    template=None,
+    context=None,
+    rebuild=False,
+    saltenv="base",
+    namespace="default",
+    **kwargs
 ):
     """
     Replaces an existing configmap with a new one defined by name and
@@ -1356,7 +2565,7 @@ def replace_configmap(
     data = __enforce_only_strings_dict(data)
 
     body = kubernetes.client.V1ConfigMap(
-        metadata=__dict_to_object_meta(name, namespace, {}), data=data
+        metadata=__dict_to_object_meta(name, namespace, metadata), data=data
     )
 
     cfg = _setup_conn(**kwargs)
@@ -1370,7 +2579,127 @@ def replace_configmap(
         if isinstance(exc, ApiException) and exc.status == 404:
             return None
         else:
-            log.exception("Exception when calling CoreV1Api->replace_namespaced_configmap")
+            log.exception(
+                "Exception when calling CoreV1Api->replace_namespaced_configmap"
+            )
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+def replace_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Replaces a kubernetes namespaced custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        return None
+
+    # https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+    # we have to query + extract the existing resourceVersion or get error 422
+    existing = api_instance.get(resource=res_def,
+                                name=name, namespace=namespace )
+
+    meta = __dict_to_object_meta(name, namespace, metadata).to_dict()
+    meta["resourceVersion"] = existing.to_dict()["metadata"]["resourceVersion"]
+
+    res_manifest = {
+            "apiVersion": apiVersion,
+            "kind": kind,
+            "metadata": meta,
+            "spec": spec,
+    }
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.replace(body=res_manifest, namespace=namespace)
+
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->replace")
+            raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_custom_obj(
+    name,
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Replaces a kubernetes custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    res_def = get_resource_def(apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        return None
+
+    # https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+    # we have to query + extract the existing resourceVersion or get error 422
+    existing = api_instance.get(resource=res_def,
+                                name=name)
+
+    meta = __dict_to_object_meta(name, None, metadata).to_dict()
+    meta["resourceVersion"] = existing.to_dict()["metadata"]["resourceVersion"]
+
+    res_manifest = {
+            "apiVersion": apiVersion,
+            "kind": kind,
+            "metadata": meta,
+            "spec": spec,
+    }
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.replace(body=res_manifest)
+
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->replace")
             raise CommandExecutionError(exc)
     finally:
         _cleanup(**cfg)
@@ -1393,8 +2722,14 @@ def __create_object_body(
     """
     if source:
         src_obj = __read_and_render_yaml_file(source, template, saltenv)
-        if not isinstance(src_obj, dict) or "kind" not in src_obj or src_obj["kind"] != kind:
-            raise CommandExecutionError(f"The source file should define only a {kind} object")
+        if (
+            not isinstance(src_obj, dict)
+            or "kind" not in src_obj
+            or src_obj["kind"] != kind
+        ):
+            raise CommandExecutionError(
+                f"The source file should define only a {kind} object"
+            )
 
         if "metadata" in src_obj:
             metadata = src_obj["metadata"]
@@ -1407,7 +2742,7 @@ def __create_object_body(
     )
 
 
-def __read_and_render_yaml_file(source, template, saltenv):
+def __read_and_render_yaml_file(source, template, saltenv, context=None):
     """
     Read a yaml file and, if needed, renders that using the specifieds
     templating. Returns the python objects defined inside of the file.
@@ -1429,6 +2764,7 @@ def __read_and_render_yaml_file(source, template, saltenv):
                     from_str=True,
                     to_str=True,
                     saltenv=saltenv,
+                    context=context,
                     grains=__grains__,
                     pillar=__pillar__,
                     salt=__salt__,
@@ -1438,12 +2774,14 @@ def __read_and_render_yaml_file(source, template, saltenv):
                 if not data["result"]:
                     # Failed to render the template
                     raise CommandExecutionError(
-                        f'Failed to render file path with error: {data["data"]}'
+                        f"Failed to render file path with error: {data['data']}"
                     )
 
                 contents = data["data"].encode("utf-8")
             else:
-                raise CommandExecutionError(f"Unknown template specified: {template}")
+                raise CommandExecutionError(
+                    f"Unknown template specified: {template}"
+                )
 
         return salt.utils.yaml.safe_load(contents)
 
@@ -1453,7 +2791,11 @@ def __dict_to_object_meta(name, namespace, metadata):
     Converts a dictionary into kubernetes ObjectMetaV1 instance.
     """
     meta_obj = kubernetes.client.V1ObjectMeta()
-    meta_obj.namespace = namespace
+    if metadata is None:
+        metadata = {}
+
+    if namespace is not None:
+        meta_obj.namespace = namespace
 
     # Replicate `kubectl [create|replace|apply] --record`
     if "annotations" not in metadata:
@@ -1477,9 +2819,9 @@ def __dict_to_object_meta(name, namespace, metadata):
 
 def __dict_to_deployment_spec(spec):
     """
-    Converts a dictionary into kubernetes AppsV1beta1DeploymentSpec instance.
+    Converts a dictionary into kubernetes AppsV1DeploymentSpec instance.
     """
-    spec_obj = AppsV1beta1DeploymentSpec(template=spec.get("template", ""))
+    spec_obj = AppsV1DeploymentSpec(template=spec.get("template", ""))
     for key, value in spec.items():
         if hasattr(spec_obj, key):
             setattr(spec_obj, key, value)

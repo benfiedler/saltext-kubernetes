@@ -143,7 +143,15 @@ def deployment_absent(name, namespace="default", **kwargs):
 
 
 def deployment_present(
-    name, namespace="default", metadata=None, spec=None, source="", template="", **kwargs
+    name,
+    namespace="default",
+    metadata=None,
+    spec=None,
+    source="",
+    template="",
+    context=None,
+    rebuild=False,
+    **kwargs
 ):
     """
     Ensures that the named deployment is present inside of the specified
@@ -169,6 +177,12 @@ def deployment_present(
 
     template
         Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
     """
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
 
@@ -195,6 +209,7 @@ def deployment_present(
             spec=spec,
             source=source,
             template=template,
+            context=context,
             saltenv=__env__,
             **kwargs,
         )
@@ -214,8 +229,10 @@ def deployment_present(
             spec=spec,
             source=source,
             template=template,
+            context=context,
             saltenv=__env__,
-            **kwargs,
+            rebuild=rebuild,
+            **kwargs
         )
 
     ret["changes"] = {"metadata": metadata, "spec": spec}
@@ -224,7 +241,15 @@ def deployment_present(
 
 
 def service_present(
-    name, namespace="default", metadata=None, spec=None, source="", template="", **kwargs
+    name,
+    namespace="default",
+    metadata=None,
+    spec=None,
+    source="",
+    template="",
+    context=None,
+    rebuild=False,
+    **kwargs
 ):
     """
     Ensures that the named service is present inside of the specified namespace
@@ -250,6 +275,12 @@ def service_present(
 
     template
         Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
     """
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
 
@@ -276,6 +307,7 @@ def service_present(
             spec=spec,
             source=source,
             template=template,
+            context=context,
             saltenv=__env__,
             **kwargs,
         )
@@ -295,9 +327,11 @@ def service_present(
             spec=spec,
             source=source,
             template=template,
+            context=context,
             old_service=service,
             saltenv=__env__,
-            **kwargs,
+            rebuild=rebuild,
+            **kwargs
         )
 
     ret["changes"] = {"metadata": metadata, "spec": spec}
@@ -313,7 +347,9 @@ def service_absent(name, namespace="default", **kwargs):
         The name of the service
 
     namespace
-        The name of the namespace
+        The namespace holding the service. The 'default' one is going
+        to be used unless a different one is specified.
+
     """
 
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
@@ -334,6 +370,138 @@ def service_absent(name, namespace="default", **kwargs):
     if res["code"] == 200:
         ret["result"] = True
         ret["changes"] = {"kubernetes.service": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def service_account_present(
+    name,
+    namespace="default",
+    metadata=None,
+    automount_service_account_token=None,
+    image_pull_secrets=None,
+    secrets=None,
+    rebuild=False,
+    **kwargs
+):
+    """
+    Ensures that the named serviceaccount is present inside of the specified namespace
+    with the given metadata and spec.
+    If the deployment exists it will be replaced.
+
+    name
+        The name of the service.
+
+    namespace
+        The namespace holding the service account. The 'default' one is going
+        to be used unless a different one is specified.
+
+    metadata
+        The metadata of the serviceaccount object.
+
+    automount_service_account_token
+        Indicate whether pods running as this service account should have an
+        API token automatically mounted.
+
+    image_pull_secrets
+        List of secrets in the same namespace to use for pulling any images in
+        pods that reference this ServiceAccount.
+
+    secrets
+        List of secrets in the same namespace that pods running using this
+        ServiceAccount are allowed to use.
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    if metadata is None:
+        metadata = {}
+
+    service_account = __salt__["kubernetes.show_service_account"](name, namespace, **kwargs)
+
+    if service_account is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The serviceaccount is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_service_account"](
+            name=name,
+            metadata=metadata,
+            saltenv=__env__,
+            namespace=namespace,
+            automount_service_account_token=automount_service_account_token,
+            image_pull_secrets=image_pull_secrets,
+            secrets=secrets,
+            rebuild=rebuild,
+            **kwargs
+        )
+        ret["changes"][f"{namespace}.{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The serviceaccount is going to be replaced"
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the serviceaccount")
+        ret["comment"] = "The serviceaccount is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_service_account"](
+            name=name,
+            metadata=metadata,
+            saltenv=__env__,
+            namespace=namespace,
+            automount_service_account_token=automount_service_account_token,
+            image_pull_secrets=image_pull_secrets,
+            secrets=secrets,
+            old_service_account=service_account,
+            rebuild=rebuild,
+            **kwargs
+        )
+
+    ret["changes"] = {"metadata": metadata,
+            "automount_service_account_token": automount_service_account_token,
+            "image_pull_secrets": image_pull_secrets,
+            "secrets": secrets,
+    }
+    ret["result"] = True
+    return ret
+
+
+def service_account_absent(name, namespace="default", **kwargs):
+    """
+    Ensures that the named serviceaccount is absent from the given namespace.
+
+    name
+        The name of the serviceaccount
+
+    namespace
+        The namespace holding the service account. The 'default' one is going
+        to be used unless a different one is specified.
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    service_account = __salt__["kubernetes.show_service_account"](name, namespace, **kwargs)
+
+    if service_account is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The serviceaccount does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The serviceaccount is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_service_account"](name, namespace, **kwargs)
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.serviceaccount": {"new": "absent", "old": "present"}}
         ret["comment"] = res["message"]
     else:
         ret["comment"] = f"Something went wrong, response: {res}"
@@ -409,6 +577,627 @@ def namespace_present(name, **kwargs):
     return ret
 
 
+def persistentvolume_absent(name, **kwargs):
+    """
+    Ensures that the named PersitentVolume is absent.
+
+    name
+        The name of the PersistentVolume
+
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    pv = __salt__["kubernetes.show_persistentvolume"](name, **kwargs)
+
+    if pv is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The PersistentVolume does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The PersistentVolume is going to be deleted"
+        return ret
+
+    __salt__["kubernetes.delete_persistentvolume"](name, **kwargs)
+
+    # As for kubernetes 1.6.4 doesn't set a code when deleting a persistentvolume
+    # The kubernetes module will raise an exception if the kubernetes
+    # server will return an error
+    ret["result"] = True
+    ret["changes"] = {"kubernetes.persistentvolume": {"new": "absent", "old": "present"}}
+    ret["comment"] = "PersistentVolume deleted"
+    return ret
+
+
+def persistentvolume_present(
+    name,
+    metadata=None,
+    spec=None,
+    status=None,
+    **kwargs
+):
+    """
+    Ensures that the named PersistentVolume is present.
+
+    name
+        The name of the PersistentVolume.
+
+    metadata
+        The metadata of the PersistentVolume object.
+
+    spec
+        The spec of the PersistentVolume object.
+
+    status
+        The status of the PersistentVolume object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    if metadata is None:
+        metadata = {}
+
+    pv = __salt__["kubernetes.show_persistentvolume"](name, **kwargs)
+
+    if pv is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The PersistentVolume is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_persistentvolume"](
+            name=name,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{name}"] = {"old": {}, "new": res}
+    else:
+        ret["comment"] = "The PersistentVolume is already present"
+        if __opts__["test"]:
+            ret["result"] = None
+            return ret
+
+    ret["changes"] = {"metadata": metadata, "spec": spec}
+    ret["result"] = True
+    return ret
+
+def persistentvolumeclaim_absent(name, namespace="default", **kwargs):
+    """
+    Ensures that the named PersistentVolumeClaim is absent from the given namespace.
+
+    name
+        The name of the PersistentVolumeClaim
+
+    namespace
+        The name of the namespace
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    pvc = __salt__["kubernetes.show_persistentvolumeclaim"](name, namespace, **kwargs)
+
+    if pvc is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The PersistentVolumeClaim does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The PersistentVolumeClaim is going to be deleted"
+        return ret
+
+    __salt__["kubernetes.delete_persistentvolumeclaim"](name, namespace, **kwargs)
+
+    # As for kubernetes 1.6.4 doesn't set a code when deleting a secret
+    # The kubernetes module will raise an exception if the kubernetes
+    # server will return an error
+    ret["result"] = True
+    ret["changes"] = {"kubernetes.persistentvolumeclaim": {"new": "absent", "old": "present"}}
+    ret["comment"] = "PersistentVolumeClaim deleted"
+    return ret
+
+def persistentvolumeclaim_present(
+    name,
+    namespace="default",
+    metadata=None,
+    spec=None,
+    status=None,
+    **kwargs
+):
+    """
+    Ensures that the named PersistentVolumeClaim is present inside of
+    the specified namespace with the given metadata and spec.
+
+    name
+        The name of the PersistentVolumeClaim.
+
+    namespace
+        The namespace holding the PersistentVolumeClaim. The 'default' one is
+        going to be used unless a different one is specified.
+
+    metadata
+        The metadata of the PersistentVolumeClaim object.
+
+    spec
+        The spec of the PersistentVolumeClaim object.
+
+    status
+        The status of the PersistentVolumeClaim object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    if metadata is None:
+        metadata = {}
+
+    if spec is None:
+        spec = {}
+
+    pvc = __salt__["kubernetes.show_persistentvolumeclaim"](name, namespace, **kwargs)
+
+    if pvc is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The PersistentVolumeClaim is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_persistentvolumeclaim"](
+            name=name,
+            namespace=namespace,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"]["{namespace}.{name}"] = {"old": {}, "new": res}
+    else:
+        ret["comment"] = "The PersistentVolumeClaim is already present"
+        if __opts__["test"]:
+            ret["result"] = None
+            return ret
+
+    ret["changes"] = {"metadata": metadata, "spec": spec}
+    ret["result"] = True
+    return ret
+
+
+def role_absent(name, namespace, **kwargs):
+    """
+    Ensures that the named role is absent.
+
+    name
+        The name of the role
+
+    namespace
+        The namespace holding the role. The 'default' one is going to be used
+        unless a different one is specified.
+
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    role = __salt__["kubernetes.show_role"](name, namespace, **kwargs)
+
+    if role is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The role does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The role is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_role"](name, namespace, **kwargs)
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.role": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def role_present(
+    name,
+    namespace="default",
+    metadata=None,
+    rules=None,
+    **kwargs
+):
+    """
+    Ensures that the named role is present.
+    If the role exists it will be replaced.
+
+    name
+        The name of the role.
+
+    namespace
+        The namespace holding the role. The 'default' one is going to be used
+        unless a different one is specified.
+
+    metadata
+        The metadata of the role object.
+
+    rules
+        The rules of the role object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    if metadata is None:
+        metadata = {}
+
+    # if rules is None:
+    #    rules = {}
+
+    role = __salt__["kubernetes.show_role"](name, namespace, **kwargs)
+
+    if role is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The role is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_role"](
+            name=name,
+            namespace=namespace,
+            metadata=metadata,
+            rules=rules,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The Role is going to be replaced"
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the role")
+        ret["comment"] = "The role is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_role"](
+            name=name,
+            namespace=namespace,
+            metadata=metadata,
+            rules=rules,
+            old_role=role,
+            saltenv=__env__,
+            **kwargs
+        )
+
+    ret["changes"] = {"metadata": metadata, "rules": rules}
+    ret["result"] = True
+    return ret
+
+
+def cluster_role_absent(name, **kwargs):
+    """
+    Ensures that the named ClusterRole is absent.
+
+    name
+        The name of the role
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    role = __salt__["kubernetes.show_cluster_role"](name, **kwargs)
+
+    if role is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The ClusterRole does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The ClusterRole is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_cluster_role"](name, **kwargs)
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.cluster_role": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def cluster_role_present(
+    name,
+    metadata=None,
+    rules=None,
+    **kwargs
+):
+    """
+    Ensures that the named ClusterRole is present.
+    If the role exists it will be replaced.
+
+    name
+        The name of the ClusterRole.
+
+    metadata
+        The metadata of the ClusterRole object.
+
+    rules
+        The rules of the ClusterRole object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    # if metadata is None:
+    #    metadata = {}
+
+    # if rules is None:
+    #    rules = {}
+
+    role = __salt__["kubernetes.show_cluster_role"](name, **kwargs)
+
+    if role is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The ClusterRole is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_cluster_role"](
+            name=name,
+            metadata=metadata,
+            rules=rules,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The ClusterRole is going to be replaced"
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the ClusterRole")
+        ret["comment"] = "The ClusterRole is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_cluster_role"](
+            name=name,
+            metadata=metadata,
+            rules=rules,
+            old_role=role,
+            saltenv=__env__,
+            **kwargs
+        )
+
+    ret["changes"] = {"metadata": metadata, "rules": rules}
+    ret["result"] = True
+    return ret
+
+
+def role_binding_absent(name, namespace="default", **kwargs):
+    """
+    Ensures that the named RoleBinding is absent.
+
+    name
+        The name of the RoleBinding
+
+    namespace
+        The namespace holding the role. The 'default' one is going to be used
+        unless a different one is specified.
+
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    role = __salt__["kubernetes.show_role_binding"](name, namespace, **kwargs)
+
+    if role is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The role binding does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The role binding is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_role_binding"](name, namespace, **kwargs)
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.role_binding": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def role_binding_present(
+    name,
+    namespace="default",
+    metadata=None,
+    roleRef=None,
+    subjects=None,
+    **kwargs
+):
+    """
+    Ensures that the named RoleBinding is present.
+    If the RoleBinding exists it will be replaced.
+
+    name
+        The name of the RoleBinding.
+
+    namespace
+        The namespace holding the RoleBinding. The 'default' one is going to
+        be used unless a different one is specified.
+
+    metadata
+        The metadata of the RoleBinding object.
+
+    roleRef
+        The roleRef of the RoleBinding object.
+
+    subjects
+        The subjects of the RoleBinding object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    if metadata is None:
+        metadata = {}
+
+    # if rules is None:
+    #    rules = {}
+
+    role_binding = __salt__["kubernetes.show_role_binding"](name, namespace, **kwargs)
+
+    if role_binding is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The RoleBinding is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_role_binding"](
+            name=name,
+            namespace=namespace,
+            metadata=metadata,
+            role_ref=roleRef,
+            subjects=subjects,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["comment"] = "The RoleBinding is going to be replaced"
+            ret["result"] = None
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the RoleBinding")
+        ret["comment"] = "The RoleBinding is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_role_binding"](
+            name=name,
+            namespace=namespace,
+            metadata=metadata,
+            role_ref=roleRef,
+            subjects=subjects,
+            old_role_binding=role_binding,
+            saltenv=__env__,
+            **kwargs
+        )
+
+    ret["changes"] = {"metadata": metadata, "roleRef": roleRef, "subjects": subjects}
+    ret["result"] = True
+    return ret
+
+
+def cluster_role_binding_absent(name, **kwargs):
+    """
+    Ensures that the named ClusterRoleBinding is absent.
+
+    name
+        The name of the ClusterRoleBinding
+
+    """
+
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    role = __salt__["kubernetes.show_cluster_role_binding"](name, **kwargs)
+
+    if role is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The CluterRole binding does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The ClusterRole binding is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_cluster_role_binding"](name, **kwargs)
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.cluster_role_binding": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def cluster_role_binding_present(
+    name,
+    metadata=None,
+    roleRef=None,
+    subjects=None,
+    **kwargs
+):
+    """
+    Ensures that the named ClusterRoleBinding is present.
+    If the ClusterRoleBinding exists it will be replaced.
+
+    name
+        The name of the ClusterRoleBinding.
+
+    metadata
+        The metadata of the RoleBinding object.
+
+    roleRef
+        The roleRef of the RoleBinding object.
+
+    subjects
+        The subjects of the RoleBinding object.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    #if metadata is None:
+    #    metadata = {}
+
+    # if rules is None:
+    #    rules = {}
+
+    role_binding = __salt__["kubernetes.show_cluster_role_binding"](name, **kwargs)
+
+    if role_binding is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The ClusterRoleBinding is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_cluster_role_binding"](
+            name=name,
+            metadata=metadata,
+            role_ref=roleRef,
+            subjects=subjects,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["comment"] = "The ClusterRoleBinding is going to be replaced"
+            ret["result"] = None
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the ClusterRoleBinding")
+        ret["comment"] = "The ClusterRoleBinding is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_cluster_role_binding"](
+            name=name,
+            metadata=metadata,
+            role_ref=roleRef,
+            subjects=subjects,
+            old_role_binding=role_binding,
+            saltenv=__env__,
+            **kwargs
+        )
+
+    ret["changes"] = {"metadata": metadata, "roleRef": roleRef, "subjects": subjects}
+    ret["result"] = True
+    return ret
+
+
 def secret_absent(name, namespace="default", **kwargs):
     """
     Ensures that the named secret is absent from the given namespace.
@@ -445,7 +1234,19 @@ def secret_absent(name, namespace="default", **kwargs):
     return ret
 
 
-def secret_present(name, namespace="default", data=None, source=None, template=None, **kwargs):
+def secret_present(
+    name,
+    namespace="default",
+    data=None,
+    stringData=None,
+    metadata=None,
+    source=None,
+    template=None,
+    context=None,
+    type="Opaque",
+    rebuild=False,
+    **kwargs
+):
     """
     Ensures that the named secret is present inside of the specified namespace
     with the given data.
@@ -461,11 +1262,26 @@ def secret_present(name, namespace="default", data=None, source=None, template=N
     data
         The dictionary holding the secrets.
 
+    stringData
+        The dictionary holding the stringData secrets.
+
+    metadata
+        The dictionary of metadata values (omitting namespace and name)
+
     source
         A file containing the data of the secret in plain format.
 
     template
         Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    type
+        The type of secret. Default is Opaque
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
     """
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
 
@@ -486,10 +1302,14 @@ def secret_present(name, namespace="default", data=None, source=None, template=N
             name=name,
             namespace=namespace,
             data=data,
+            stringData=stringData,
+            metadata=metadata,
             source=source,
             template=template,
+            context=context,
+            type=type,
             saltenv=__env__,
-            **kwargs,
+            **kwargs
         )
         ret["changes"][f"{namespace}.{name}"] = {"old": {}, "new": res}
     else:
@@ -505,11 +1325,23 @@ def secret_present(name, namespace="default", data=None, source=None, template=N
             name=name,
             namespace=namespace,
             data=data,
+            stringData=stringData,
+            metadata=metadata,
             source=source,
             template=template,
+            context=context,
+            type=type,
+            rebuild=rebuild,
             saltenv=__env__,
             **kwargs,
         )
+    # Omit values from the return. They are unencrypted
+    # and can contain sensitive data.
+    try:
+        clean_data = list(res["data"])
+    # TypeError: 'NoneType' object is not iterable
+    except (TypeError) as exc:
+        clean_data = []
 
     ret["changes"] = {
         # Omit values from the return. They are unencrypted
@@ -558,7 +1390,17 @@ def configmap_absent(name, namespace="default", **kwargs):
     return ret
 
 
-def configmap_present(name, namespace="default", data=None, source=None, template=None, **kwargs):
+def configmap_present(
+    name,
+    namespace="default",
+    data=None,
+    metadata=None,
+    source=None,
+    template=None,
+    context=None,
+    rebuild=False,
+    **kwargs
+):
     """
     Ensures that the named configmap is present inside of the specified namespace
     with the given data.
@@ -574,11 +1416,20 @@ def configmap_present(name, namespace="default", data=None, source=None, templat
     data
         The dictionary holding the configmaps.
 
+    metadata
+        The dictionary of metadata values (omitting namespace and name)
+
     source
         A file containing the data of the configmap in plain format.
 
     template
         Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
     """
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
 
@@ -598,8 +1449,10 @@ def configmap_present(name, namespace="default", data=None, source=None, templat
             name=name,
             namespace=namespace,
             data=data,
+            metadata=metadata,
             source=source,
             template=template,
+            context=context,
             saltenv=__env__,
             **kwargs,
         )
@@ -617,10 +1470,372 @@ def configmap_present(name, namespace="default", data=None, source=None, templat
             name=name,
             namespace=namespace,
             data=data,
+            metadata=metadata,
             source=source,
             template=template,
+            context=context,
+            rebuild=rebuild,
             saltenv=__env__,
-            **kwargs,
+            **kwargs
+        )
+
+    ret["changes"] = {"data": res["data"]}
+    ret["result"] = True
+    return ret
+
+def namespaced_custom_obj_absent(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    **kwargs
+):
+    """
+    Ensures that the namespaced custom object is absent inside of the
+    specified namespace with the given data.
+
+    name
+        The name of the object.
+
+    namespace
+        The namespace holding the object. The 'default' one is going to be
+        used unless a different one is specified.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    res_def = __salt__["kubernetes.get_resource_def"](apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_namespaced_custom_obj"](
+        name, apiVersion, kind, namespace, **kwargs
+    )
+
+    if obj is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The object does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The object is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_namespaced_custom_obj"](name, namespace, apiVersion, kind, **kwargs)
+
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.namespaced_custom_obj": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def namespaced_custom_obj_present(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    context=None,
+    rebuild=False,
+    **kwargs
+):
+    """
+    Ensures that the namespaced custom object is present inside of the
+    specified namespace with the given data.
+    If the custom object exists it will be replaced.
+
+    name
+        The name of the object.
+
+    namespace
+        The namespace holding the object. The 'default' one is going to be
+        used unless a different one is specified.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    metadata
+        The dictionary of metadata values (omitting namespace and name).
+
+    spec
+        The spec of the custom object.
+
+    status
+        The status of the custom object.
+
+    source
+        A file containing the data of the object in plain format.
+
+    template
+        Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    res_def = __salt__["kubernetes.get_resource_def"](apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_namespaced_custom_obj"](
+        name, apiVersion, kind, namespace, **kwargs
+    )
+
+    if obj is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The object is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_namespaced_custom_obj"](
+            name=name,
+            namespace=namespace,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{namespace}.{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The custom object is going to be replaced"
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the custom object")
+        ret["comment"] = "The custom object is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_namespaced_custom_obj"](
+            name=name,
+            namespace=namespace,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
+        )
+
+    ret["changes"] = {"data": res["data"]}
+    ret["result"] = True
+    return ret
+
+def custom_obj_absent(
+    name,
+    apiVersion="v1",
+    kind=None,
+    **kwargs
+):
+    """
+    Ensures that the cluster scope custom object is absent inside of the
+    specified namespace with the given data.
+
+    name
+        The name of the object.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    spec
+        The spec of the custom object.
+
+    status
+        The status of the custom object.
+
+    source
+        A file containing the data of the object in plain format.
+
+    template
+        Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    res_def = __salt__["kubernetes.get_resource_def"](apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_custom_obj"](
+        name, apiVersion, kind, **kwargs
+    )
+
+    if obj is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The object does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["comment"] = "The object is going to be deleted"
+        ret["result"] = None
+        return ret
+
+    __salt__["kubernetes.delete_custom_obj"](name,
+                                             apiVersion=apiVersion,
+                                             kind=kind, **kwargs)
+    ret["result"] = True
+    ret["changes"] = {"kubernetes.custom_obj": {"new": "absent", "old": "present"}}
+    ret["comment"] = f"{kind} {name} deleted"
+
+    return ret
+
+
+def custom_obj_present(
+    name,
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    context=None,
+    rebuild=False,
+    **kwargs
+):
+    """
+    Ensures that the custom object is present inside of the
+    specified namespace with the given data.
+    If the custom object exists it will be replaced.
+
+    name
+        The name of the object.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    metadata
+        The dictionary of metadata values (omitting namespace and name).
+
+    spec
+        The spec of the custom object.
+
+    status
+        The status of the custom object.
+
+    source
+        A file containing the data of the object in plain format.
+
+    template
+        Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    res_def = __salt__["kubernetes.get_resource_def"](apiVersion=apiVersion, kind=kind)
+
+    if res_def is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_custom_obj"](
+        name, apiVersion, kind, **kwargs
+    )
+
+    if obj is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The object is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_custom_obj"](
+            name=name,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{kind}.{name}"] = {"old": {}, "new": res}
+    else:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The custom object is going to be replaced"
+            return ret
+
+        # TODO: improve checks  # pylint: disable=fixme
+        log.info("Forcing the recreation of the custom object")
+        ret["comment"] = "The custom object is already present. Forcing recreation"
+        res = __salt__["kubernetes.replace_custom_obj"](
+            name=name,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
         )
 
     ret["changes"] = {"data": res["data"]}
@@ -668,7 +1883,15 @@ def pod_absent(name, namespace="default", **kwargs):
 
 
 def pod_present(
-    name, namespace="default", metadata=None, spec=None, source="", template="", **kwargs
+    name,
+    namespace="default",
+    metadata=None,
+    spec=None,
+    source="",
+    template="",
+    context=None,
+    rebuild=False,
+    **kwargs
 ):
     """
     Ensures that the named pod is present inside of the specified
@@ -694,6 +1917,12 @@ def pod_present(
 
     template
         Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
     """
     ret = {"name": name, "changes": {}, "result": False, "comment": ""}
 
@@ -720,6 +1949,7 @@ def pod_present(
             spec=spec,
             source=source,
             template=template,
+            context=context,
             saltenv=__env__,
             **kwargs,
         )
