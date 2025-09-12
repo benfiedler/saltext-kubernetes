@@ -57,6 +57,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 
+import salt.utils.data
 import salt.utils.files
 import salt.utils.platform
 import salt.utils.templates
@@ -68,6 +69,7 @@ from salt.exceptions import TimeoutError
 try:
     import kubernetes  # pylint: disable=import-self
     import kubernetes.client
+    from kubernetes.client import api_client
     from kubernetes.client import V1Deployment
     from kubernetes.client import V1DeploymentSpec
     from kubernetes.client.rest import ApiException
@@ -83,6 +85,19 @@ log = logging.getLogger(__name__)
 
 __virtualname__ = "kubernetes"
 
+# list of keys to ignore when comparing a patched object
+IGNORE_KEYS = [
+    'status',
+    'resourceVersion',          # Changes on every update
+    'generation',               # Increments on spec changes
+    'uid',                      # Unique identifier assigned at creation
+    'selfLink',                 # Deprecated field
+    'creationTimestamp',        # Set once at creation
+    'deletionTimestamp',        # Set when object is being deleted
+    'deletionGracePeriodSeconds', # Grace period for deletion
+    'managedFields',            # Server-side apply tracking
+    'finalizers',               # May change during lifecycle
+]
 
 def __virtual__():
     """
@@ -147,6 +162,29 @@ def _cleanup(**kwargs):
             except OSError as err:
                 if err.errno != errno.ENOENT:
                     log.exception(err)
+
+def get_crd(apiVersion="v1", kind=None, **kwargs):
+    """
+    Get a custom resource's definition using the dynamic client discoverer
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.dynamic.DynamicClient(
+            api_client.ApiClient()
+        )
+        res = api_instance.resources.get(api_version=apiVersion, kind=kind)
+        return res
+
+    except (ApiException, HTTPError, ResourceNotFoundError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling DynamicClient->resources.get")
+            raise CommandExecutionError(exc) from exc
+    finally:
+        _cleanup(**cfg)
+
+    return None
 
 
 def ping(**kwargs):
@@ -701,6 +739,44 @@ def show_configmap(name, namespace="default", **kwargs):
         _cleanup(**cfg)
 
 
+def show_namespaced_custom_obj(name, apiVersion, kind, namespace="default", **kwargs):
+    """
+    Return the kubernetes namespaced custom object defined by name and kind.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.show_namespaced_custom_obj myres v1 blah default
+        salt '*' kubernetes.show_namespaced_custom_obj name=myres apiVersion=x kind=blah namespace=default
+    """
+    cfg = _setup_conn(**kwargs)
+    try:
+        api_instance = kubernetes.dynamic.DynamicClient(
+            api_client.ApiClient()
+        )
+
+        crd = get_crd(apiVersion=apiVersion, kind=kind)
+
+        if crd is None:
+            return None
+
+        api_response = api_instance.get(resource=crd,
+                         name=name, namespace=namespace )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception(
+                "Exception when calling DynamicClient->get"
+            )
+            raise CommandExecutionError(exc) from exc
+    finally:
+        _cleanup(**cfg)
+
+
 def delete_deployment(name, namespace="default", wait=False, timeout=60, **kwargs):
     """
     Deletes the kubernetes deployment defined by name and namespace
@@ -1006,6 +1082,45 @@ def delete_configmap(name, namespace="default", wait=False, timeout=60, **kwargs
         else:
             log.exception("Exception when calling CoreV1Api->delete_namespaced_config_map")
             raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
+
+
+def delete_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Delete the kubernetes namespaced custom object specified by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    crd = get_crd(apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        return None
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.delete(name=name, namespace=namespace)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->delete")
+            raise CommandExecutionError(exc) from exc
     finally:
         _cleanup(**cfg)
 
@@ -1642,6 +1757,298 @@ def create_namespace(name, **kwargs):
     finally:
         _cleanup(**cfg)
 
+
+def create_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Creates the kubernetes custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    crd = get_crd(apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        return None
+
+    body = {
+            "apiVersion": apiVersion,
+            "kind": kind,
+            "metadata": __dict_to_object_meta(name, namespace, metadata).to_dict(),
+            "spec": spec,
+    }
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.create(body=body, namespace=namespace)
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->create")
+            raise CommandExecutionError(exc) from exc
+    finally:
+        _cleanup(**cfg)
+
+
+def patch_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    dryrun=False,
+    source=None,
+    template=None,
+    #context=context,
+    ignore_keys=IGNORE_KEYS,
+    ignore_missing=True,
+    ignore_order=True,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Patch a kubernetes namespaced custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    crd = get_crd(apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        return None
+
+    # https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+    # we have to extract the existing resourceVersion or else will get error 422
+    current = api_instance.get(resource=crd,
+                                name=name, namespace=namespace )
+
+    meta = __dict_to_object_meta(name, namespace, metadata).to_dict()
+    meta["resourceVersion"] = current.to_dict()["metadata"]["resourceVersion"]
+
+    body = {
+        "apiVersion": apiVersion,
+        "kind": kind,
+        "metadata": meta,
+        "spec": spec,
+    }
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.patch(
+            body=body,
+            content_type="application/merge-patch+json",
+            field_manager=" ".join(sys.argv),
+            dry_run="All" if dryrun else None,
+        )
+        diff = salt.utils.data.recursive_diff(
+            current.to_dict(),
+            api_response.to_dict(),
+            ignore_keys=ignore_keys,
+            ignore_order=ignore_order,
+            ignore_missing_keys=ignore_missing,
+        )
+
+        if diff:
+            return {"data": {"old": diff.get("old"), "new": diff.get("new")}}
+        else:
+            return {"data": None}
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->patch")
+            raise CommandExecutionError(exc) from exc
+    finally:
+        _cleanup(**cfg)
+
+
+def replace_namespaced_custom_obj(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    #context=context,
+    saltenv="base",
+    **kwargs,
+):
+
+    """
+    Replaces a kubernetes namespaced custom object as defined by the user.
+    """
+    cfg = _setup_conn(**kwargs)
+
+    api_instance = kubernetes.dynamic.DynamicClient(
+        api_client.ApiClient()
+    )
+
+    crd = get_crd(apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        return None
+
+    # https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+    # we have to query + extract the existing resourceVersion or get error 422
+    current = api_instance.get(resource=crd,
+                                name=name, namespace=namespace )
+
+    meta = __dict_to_object_meta(name, namespace, metadata).to_dict()
+    meta["resourceVersion"] = current.to_dict()["metadata"]["resourceVersion"]
+
+    body = {
+        "apiVersion": apiVersion,
+        "kind": kind,
+        "metadata": meta,
+        "spec": spec,
+    }
+
+    cr_api = api_instance.resources.get(api_version=apiVersion, kind=kind)
+
+    try:
+        api_response = cr_api.replace(body=body, namespace=namespace)
+
+        return {"data": api_response.to_dict() }
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            return None
+        else:
+            log.exception("Exception when calling cr_api->replace")
+            raise CommandExecutionError(exc) from exc
+    finally:
+        _cleanup(**cfg)
+
+
+def patch_deployment(
+    name,
+    metadata,
+    spec,
+    source=None,
+    template=None,
+    saltenv=None,
+    namespace="default",
+    template_context=None,
+    wait=False,
+    timeout=60,
+    dryrun=False,
+    **kwargs,
+):
+    """
+    Patch an existing deployment with values defined by name and
+    namespace, having the specified metadata and spec.
+
+    name
+        The name of the deployment
+
+    metadata
+        Deployment metadata dict
+
+    spec
+        Deployment spec dict following kubernetes API conventions
+
+    source
+        File path to deployment definition
+
+    template
+        Template engine to use to render the source file
+
+    saltenv
+        Salt environment to pull the source file from
+
+        .. versionchanged:: 2.0.0
+            Defaults to the value of the :conf_minion:`saltenv` minion option or ``base``.
+
+    namespace
+        The namespace to replace the deployment in. Defaults to ``default``.
+
+    template_context
+        .. versionadded:: 2.0.0
+
+        Variables to make available in templated files
+
+    wait
+        .. versionadded:: 2.0.0
+
+        Wait for deployment to become ready (default: False)
+
+    timeout
+        .. versionadded:: 2.0.0
+
+        Timeout in seconds to wait for deployment (default: 60)
+
+    dryrun
+        When present, indicates that modifications should not be persisted (default: False)
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' kubernetes.replace_deployment *args
+    """
+    body = __create_object_body(
+        kind="Deployment",
+        obj_class=V1Deployment,
+        spec_creator=__dict_to_deployment_spec,
+        name=name,
+        namespace=namespace,
+        metadata=metadata,
+        spec=spec,
+        source=source,
+        template=template,
+        saltenv=saltenv,
+        template_context=template_context,
+    )
+
+    cfg = _setup_conn(**kwargs)
+
+    try:
+        api_instance = kubernetes.client.AppsV1Api()
+        api_response = api_instance.patch_namespaced_deployment(name, namespace, body)
+
+        if wait:
+            if not _wait_for_resource_status(
+                api_instance, "deployment", name, namespace, "ready", timeout
+            ):
+                raise CommandExecutionError(
+                    f"Timeout waiting for deployment {name} to become ready"
+                )
+
+        return api_response.to_dict()
+    except (ApiException, HTTPError) as exc:
+        if isinstance(exc, ApiException) and exc.status == 404:
+            raise CommandExecutionError(f"Deployment {namespace}/{name} not found") from exc
+        log.exception("Exception when calling AppsV1Api->replace_namespaced_deployment")
+        raise CommandExecutionError(exc)
+    finally:
+        _cleanup(**cfg)
 
 def replace_deployment(
     name,

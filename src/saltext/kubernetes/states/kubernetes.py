@@ -629,6 +629,197 @@ def namespace_absent(name, wait=False, timeout=60, **kwargs):
     return ret
 
 
+def namespaced_custom_obj_absent(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    **kwargs
+):
+    """
+    Ensures that the namespaced custom object is absent inside of the
+    specified namespace with the given data.
+
+    name
+        The name of the object.
+
+    namespace
+        The namespace holding the object. The 'default' one is going to be
+        used unless a different one is specified.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    crd = __salt__["kubernetes.get_crd"](apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_namespaced_custom_obj"](
+        name, apiVersion, kind, namespace, **kwargs
+    )
+
+    if obj is None:
+        ret["result"] = True if not __opts__["test"] else None
+        ret["comment"] = "The object does not exist"
+        return ret
+
+    if __opts__["test"]:
+        ret["result"] = None
+        ret["comment"] = "The object is going to be deleted"
+        return ret
+
+    res = __salt__["kubernetes.delete_namespaced_custom_obj"](name, namespace, apiVersion, kind, **kwargs)
+
+    if res["code"] == 200:
+        ret["result"] = True
+        ret["changes"] = {"kubernetes.namespaced_custom_obj": {"new": "absent", "old": "present"}}
+        ret["comment"] = res["message"]
+    else:
+        ret["comment"] = f"Something went wrong, response: {res}"
+
+    return ret
+
+
+def namespaced_custom_obj_present(
+    name,
+    namespace="default",
+    apiVersion="v1",
+    kind=None,
+    metadata=None,
+    spec=None,
+    status=None,
+    source=None,
+    template=None,
+    context=None,
+    rebuild=False,
+    **kwargs
+):
+    """
+    Ensures that the namespaced custom object is present inside of the
+    specified namespace with the given data.
+    If the custom object exists it will be replaced.
+
+    name
+        The name of the object.
+
+    namespace
+        The namespace holding the object. The 'default' one is going to be
+        used unless a different one is specified.
+
+    apiVersion
+        The apiVersion to specify for the resource.
+
+    kind
+        The kind of the custom resource.
+
+    metadata
+        The dictionary of metadata values (omitting namespace and name).
+
+    spec
+        The spec of the custom object.
+
+    status
+        The status of the custom object.
+
+    source
+        A file containing the data of the object in plain format.
+
+    template
+        Template engine to be used to render the source file.
+
+    context
+        Context variables passed to the template
+
+    rebuild
+        Delete and recreate the resource if a non-fatal error is encountered
+    """
+    ret = {"name": name, "changes": {}, "result": False, "comment": ""}
+
+    crd = __salt__["kubernetes.get_crd"](apiVersion=apiVersion, kind=kind)
+
+    if crd is None:
+        ret["result"] = False
+        ret["comment"] = (f"The resource definition '{apiVersion}:{kind}'"
+                          f" cannot be found"
+                         )
+        return ret
+
+    obj = __salt__["kubernetes.show_namespaced_custom_obj"](
+        name, apiVersion, kind, namespace, **kwargs
+    )
+
+    if obj is None:
+        if __opts__["test"]:
+            ret["result"] = None
+            ret["comment"] = "The object is going to be created"
+            return ret
+        res = __salt__["kubernetes.create_namespaced_custom_obj"](
+            name=name,
+            namespace=namespace,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
+        )
+        ret["changes"][f"{namespace}.{name}"] = {"old": {}, "new": res}
+    else:
+
+        # TODO: improve checks  # pylint: disable=fixme
+        res = __salt__["kubernetes.patch_namespaced_custom_obj"](
+            name=name,
+            namespace=namespace,
+            apiVersion=apiVersion,
+            kind=kind,
+            metadata=metadata,
+            spec=spec,
+            status=status,
+            dryrun=__opts__["test"],
+            source=source,
+            template=template,
+            context=context,
+            saltenv=__env__,
+            **kwargs
+        )
+
+        if __opts__["test"]:
+            ret["result"] = None
+            if res["data"]:
+                ret["comment"] = "The existing object will be patched"
+                ret["changes"] = res["data"]
+            else:
+                ret["comment"] = "The existing object is up to date"
+                ret["changes"] = {}
+                ret["result"] = True
+            return ret
+
+    log.info(res)
+    if res["data"] is None:
+        ret["comment"] = "The existing object is up to date"
+        ret["changes"] = {}
+    else:
+        ret["comment"] = "The existing object was patched"
+        ret["changes"] = {"data": res["data"]}
+    ret["result"] = True
+    return ret
+
+
 def namespace_present(name, **kwargs):
     """
     Ensures that the named namespace is present.
